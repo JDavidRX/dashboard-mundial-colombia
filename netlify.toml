@@ -1,9 +1,0 @@
-[build]
-  publish = "."
-  functions = "netlify/functions"
-
-# Refresca los datos automáticamente cada día a las 6am (cron).
-# Requiere el plugin de scheduled functions o configurarlo en el dashboard de Netlify.
-# Para "cada vez que Colombia juega" basta con el fetch del frontend + este cron diario.
-[functions]
-  node_bundler = "esbuild"
