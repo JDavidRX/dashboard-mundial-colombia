@@ -1,11 +1,4 @@
-// netlify/functions/predict.js
 // Genera la predicción de Claude para un partido, con datos de contexto.
-// El dashboard (o vos antes de cada partido) llama a /.netlify/functions/predict?opp=Portugal
-//
-// Variable de entorno en Netlify:
-//   ANTHROPIC_API_KEY = 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
-//
-// Devuelve { score, market, confidence, reason } para pegarlo en el dashboard.
 
 export async function handler(event) {
   const opp = event.queryStringParameters?.opp || 'el próximo rival';
