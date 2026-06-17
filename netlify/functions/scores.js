@@ -1,12 +1,3 @@
-// netlify/functions/scores.js
-// Proxy a API-Football. Esconde tu API key (queda en variables de entorno de Netlify,
-// NUNCA en el frontend). El dashboard llama a /.netlify/functions/scores
-//
-// Variables de entorno a configurar en Netlify (Site settings > Environment variables):
-//   APIFOOTBALL_KEY = tu_api_key_de_api-sports
-//
-// API-Football: Mundial 2026 = league 1, season 2026.
-
 const API = 'https://v3.football.api-sports.io';
 const HEADERS = { 'x-apisports-key': process.env.APIFOOTBALL_KEY };
 
