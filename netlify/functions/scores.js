@@ -1,3 +1,12 @@
+// netlify/functions/scores.js
+// Proxy a API-Football. Esconde tu API key (queda en variables de entorno de Netlify,
+// NUNCA en el frontend). El dashboard llama a /.netlify/functions/scores
+//
+// Variables de entorno a configurar en Netlify (Site settings > Environment variables):
+//   APIFOOTBALL_KEY = tu_api_key_de_api-sports
+//
+// API-Football: Mundial 2026 = league 1, season 2026.
+
 const API = 'https://v3.football.api-sports.io';
 const HEADERS = { 'x-apisports-key': process.env.APIFOOTBALL_KEY };
 
@@ -6,9 +15,53 @@ const COLOMBIA_ID = 1846;
 
 export async function handler() {
   try {
+    if (!process.env.APIFOOTBALL_KEY) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Falta la variable de entorno APIFOOTBALL_KEY en Netlify.' }) };
+    }
+
     // 1) Partidos de Colombia en el Mundial
     const fxRes = await fetch(`${API}/fixtures?league=1&season=2026&team=${COLOMBIA_ID}`, { headers: HEADERS });
     const fxJson = await fxRes.json();
+
+    if (fxJson.errors && Object.keys(fxJson.errors).length) {
+      return { statusCode: 200, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: `API-Football: ${JSON.stringify(fxJson.errors)}` }) };
+    }
+
+    // DEBUG TEMPORAL: si no hay partidos, devolvemos lo que la API contestó de verdad
+    // para saber si el problema es el ID de Colombia o el league/season.
+    if (!fxJson.response || fxJson.response.length === 0) {
+      let teamSearch = null;
+      try {
+        const tsRes = await fetch(`${API}/teams?search=colombia`, { headers: HEADERS });
+        const tsJson = await tsRes.json();
+        teamSearch = (tsJson.response || []).map(t => ({ id: t.team.id, name: t.team.name, country: t.team.country }));
+      } catch (e) { teamSearch = `error buscando equipo: ${e}`; }
+
+      let leagueSearch = null;
+      try {
+        const lsRes = await fetch(`${API}/leagues?search=world cup`, { headers: HEADERS });
+        const lsJson = await lsRes.json();
+        leagueSearch = (lsJson.response || []).map(l => ({ id: l.league.id, name: l.league.name, type: l.league.type, seasons: (l.seasons||[]).map(s=>s.year) }));
+      } catch (e) { leagueSearch = `error buscando liga: ${e}`; }
+
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: 'Sin partidos para ese team/league/season.',
+          debug: {
+            results: fxJson.results,
+            paging: fxJson.paging,
+            params_enviados: fxJson.parameters,
+            colombia_team_search: teamSearch,
+            world_cup_league_search: leagueSearch,
+          },
+          fixtures: [], standings: [], worldcupForm: {},
+        }),
+      };
+    }
 
     const fixtures = (fxJson.response || []).map(x => {
       const home = x.teams.home, away = x.teams.away;
@@ -62,6 +115,6 @@ export async function handler() {
       body: JSON.stringify({ fixtures, standings: groupK, worldcupForm, updated: Date.now() }),
     };
   } catch (e) {
-    return { statusCode: 502, body: JSON.stringify({ error: String(e) }) };
+    return { statusCode: 200, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ error: String(e) }) };
   }
 }
