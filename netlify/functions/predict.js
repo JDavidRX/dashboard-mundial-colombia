@@ -1,4 +1,11 @@
+// netlify/functions/predict.js
 // Genera la predicción de Claude para un partido, con datos de contexto.
+// El dashboard (o vos antes de cada partido) llama a /.netlify/functions/predict?opp=Portugal
+//
+// Variable de entorno en Netlify:
+//   ANTHROPIC_API_KEY = tu_key_de_anthropic   (consíguela en console.anthropic.com)
+//
+// Devuelve { score, market, confidence, reason } para pegarlo en el dashboard.
 
 export async function handler(event) {
   const opp = event.queryStringParameters?.opp || 'el próximo rival';
@@ -26,9 +33,32 @@ score es el marcador Colombia-rival. market es quién gana segun tu predicción.
         messages: [{ role: 'user', content: prompt }],
       }),
     });
-    const data = await res.json();
-    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+
+    const raw = await res.text(); // leemos texto crudo primero, así nunca explota el JSON.parse
+    let data;
+    try { data = JSON.parse(raw); } catch { data = null; }
+
+    if (!res.ok) {
+      // Devolvemos el error real de Anthropic (auth inválida, sin crédito, modelo incorrecto, etc.)
+      const msg = data?.error?.message || raw || `HTTP ${res.status}`;
+      return {
+        statusCode: 200, // 200 a propósito: así el frontend puede leer p.error sin romperse
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: `Anthropic API (${res.status}): ${msg}` }),
+      };
+    }
+
+    const text = (data?.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
     const clean = text.replace(/```json|```/g, '').trim();
+
+    if (!clean) {
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ error: 'Claude respondió vacío. Revisá el prompt o el modelo.' }),
+      };
+    }
+
     const pick = JSON.parse(clean);
 
     return {
@@ -37,6 +67,10 @@ score es el marcador Colombia-rival. market es quién gana segun tu predicción.
       body: JSON.stringify(pick),
     };
   } catch (e) {
-    return { statusCode: 502, body: JSON.stringify({ error: String(e) }) };
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ error: `Error de función: ${String(e)}` }),
+    };
   }
 }
