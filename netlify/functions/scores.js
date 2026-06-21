@@ -1,113 +1,106 @@
 // netlify/functions/scores.js
-// Proxy a API-Football. Esconde tu API key (queda en variables de entorno de Netlify,
+// Proxy a football-data.org (su plan GRATIS sí cubre el Mundial, a diferencia de
+// API-Football). Esconde tu API key (queda en variables de entorno de Netlify,
 // NUNCA en el frontend). El dashboard llama a /.netlify/functions/scores
 //
-// Variables de entorno a configurar en Netlify (Site settings > Environment variables):
-//   APIFOOTBALL_KEY = tu_api_key_de_api-sports
+// Variable de entorno a configurar en Netlify (Site settings > Environment variables):
+//   FOOTBALL_DATA_KEY = tu_token_de_football-data.org
 //
-// API-Football: Mundial 2026 = league 1, season 2026.
+// Cómo conseguir el token (gratis, 2 minutos):
+//   1. Entrá a https://www.football-data.org/client/register
+//   2. Creá cuenta gratis, te llega el token por correo (o lo ves en tu cuenta).
+//   3. Plan gratis: 10 llamadas/minuto, incluye el Mundial (código de competición "WC").
+//
+// No usamos IDs de equipo a ciegas: filtramos todos los partidos del Mundial
+// y buscamos por nombre, así evitamos el problema que tuvimos con API-Football.
 
-const API = 'https://v3.football.api-sports.io';
-const HEADERS = { 'x-apisports-key': process.env.APIFOOTBALL_KEY };
+const API = 'https://api.football-data.org/v4';
+const HEADERS = { 'X-Auth-Token': process.env.FOOTBALL_DATA_KEY };
 
-// id de Colombia en API-Football (verificalo una vez con /teams?search=colombia)
-const COLOMBIA_ID = 1846;
+const GROUP = ['Colombia', 'Portugal', 'DR Congo', 'Uzbekistan'];
+// nombres alternativos que football-data.org podría usar para cada equipo
+const ALIASES = {
+  'Colombia': ['colombia'],
+  'Portugal': ['portugal'],
+  'DR Congo': ['dr congo', 'congo dr', 'congo democratic republic', 'democratic republic of the congo', 'congo'],
+  'Uzbekistan': ['uzbekistan', 'uzbekistán'],
+};
+function matchTeam(name, canonical) {
+  const n = (name || '').toLowerCase();
+  return ALIASES[canonical].some(a => n.includes(a));
+}
+function canonicalOf(name) {
+  return GROUP.find(c => matchTeam(name, c)) || null;
+}
 
 export async function handler() {
   try {
-    if (!process.env.APIFOOTBALL_KEY) {
+    if (!process.env.FOOTBALL_DATA_KEY) {
       return { statusCode: 200, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'Falta la variable de entorno APIFOOTBALL_KEY en Netlify.' }) };
+        body: JSON.stringify({ error: 'Falta la variable de entorno FOOTBALL_DATA_KEY en Netlify.' }) };
     }
 
-    // 1) Partidos de Colombia en el Mundial
-    const fxRes = await fetch(`${API}/fixtures?league=1&season=2026&team=${COLOMBIA_ID}`, { headers: HEADERS });
-    const fxJson = await fxRes.json();
+    // 1) Todos los partidos del Mundial (con esto sacamos fixtures de Colombia Y la forma de los 4 equipos)
+    const mRes = await fetch(`${API}/competitions/WC/matches`, { headers: HEADERS });
+    const mJson = await mRes.json();
 
-    if (fxJson.errors && Object.keys(fxJson.errors).length) {
+    if (mRes.status !== 200) {
       return { statusCode: 200, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: `API-Football: ${JSON.stringify(fxJson.errors)}` }) };
+        body: JSON.stringify({ error: `football-data.org (${mRes.status}): ${mJson?.message || JSON.stringify(mJson)}` }) };
     }
 
-    // DEBUG TEMPORAL: si no hay partidos, devolvemos lo que la API contestó de verdad
-    // para saber si el problema es el ID de Colombia o el league/season.
-    if (!fxJson.response || fxJson.response.length === 0) {
-      let teamSearch = null;
-      try {
-        const tsRes = await fetch(`${API}/teams?search=colombia`, { headers: HEADERS });
-        const tsJson = await tsRes.json();
-        teamSearch = (tsJson.response || []).map(t => ({ id: t.team.id, name: t.team.name, country: t.team.country }));
-      } catch (e) { teamSearch = `error buscando equipo: ${e}`; }
+    const matches = mJson.matches || [];
 
-      let leagueSearch = null;
-      try {
-        const lsRes = await fetch(`${API}/leagues?search=world cup`, { headers: HEADERS });
-        const lsJson = await lsRes.json();
-        leagueSearch = (lsJson.response || []).map(l => ({ id: l.league.id, name: l.league.name, type: l.league.type, seasons: (l.seasons||[]).map(s=>s.year) }));
-      } catch (e) { leagueSearch = `error buscando liga: ${e}`; }
-
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          error: 'Sin partidos para ese team/league/season.',
-          debug: {
-            results: fxJson.results,
-            paging: fxJson.paging,
-            params_enviados: fxJson.parameters,
-            colombia_team_search: teamSearch,
-            world_cup_league_search: leagueSearch,
-          },
-          fixtures: [], standings: [], worldcupForm: {},
-        }),
-      };
-    }
-
-    const fixtures = (fxJson.response || []).map(x => {
-      const home = x.teams.home, away = x.teams.away;
-      const colIsHome = home.id === COLOMBIA_ID;
-      const finished = x.fixture.status.short === 'FT' || x.fixture.status.short === 'AET' || x.fixture.status.short === 'PEN';
-      return {
-        opp: colIsHome ? away.name : home.name,
-        finished,
-        colScore: finished ? (colIsHome ? x.goals.home : x.goals.away) : null,
-        oppScore: finished ? (colIsHome ? x.goals.away : x.goals.home) : null,
-      };
-    });
+    // Partidos de Colombia (para el panel de apuestas)
+    const fixtures = matches
+      .filter(m => matchTeam(m.homeTeam?.name, 'Colombia') || matchTeam(m.awayTeam?.name, 'Colombia'))
+      .map(m => {
+        const colIsHome = matchTeam(m.homeTeam?.name, 'Colombia');
+        const finished = m.status === 'FINISHED';
+        return {
+          opp: colIsHome ? m.awayTeam?.name : m.homeTeam?.name,
+          finished,
+          colScore: finished ? (colIsHome ? m.score?.fullTime?.home : m.score?.fullTime?.away) : null,
+          oppScore: finished ? (colIsHome ? m.score?.fullTime?.away : m.score?.fullTime?.home) : null,
+        };
+      });
 
     // 2) Tabla del Grupo K
-    const stRes = await fetch(`${API}/standings?league=1&season=2026`, { headers: HEADERS });
-    const stJson = await stRes.json();
-    const allGroups = stJson.response?.[0]?.league?.standings || [];
-    const groupK = (allGroups.find(g => g.some(t => t.team.id === COLOMBIA_ID)) || []).map(t => ({
-      team: t.team.name, pj: t.all.played, g: t.all.win, e: t.all.draw, p: t.all.lose,
-      gf: t.all.goals.for, gc: t.all.goals.against, pts: t.points, col: t.team.id === COLOMBIA_ID,
-    }));
-
-    // 3) Forma del Mundial para los 4 equipos del Grupo K
-    //    (trae todos los fixtures del torneo y arma W/L/D por equipo, más reciente primero)
-    const GROUP = ['Colombia', 'Portugal', 'Congo DR', 'Uzbekistan'];
-    const worldcupForm = {}; GROUP.forEach(t => worldcupForm[t] = []);
+    let groupK = [];
     try {
-      const allRes = await fetch(`${API}/fixtures?league=1&season=2026`, { headers: HEADERS });
-      const allJson = await allRes.json();
-      const finishedAll = (allJson.response || []).filter(x =>
-        ['FT', 'AET', 'PEN'].includes(x.fixture.status.short));
-      // ordená por fecha ascendente para luego invertir
-      finishedAll.sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
-      finishedAll.forEach(x => {
-        const h = x.teams.home.name, a = x.teams.away.name;
-        GROUP.forEach(team => {
-          if (h !== team && a !== team) return;
-          const isHome = h === team;
-          const gf = isHome ? x.goals.home : x.goals.away;
-          const ga = isHome ? x.goals.away : x.goals.home;
-          const r = gf > ga ? 'W' : (gf < ga ? 'L' : 'D');
-          const opp = isHome ? a : h;
-          worldcupForm[team].unshift({ r, t: `${gf}-${ga} vs ${opp}` }); // unshift = más reciente primero
-        });
+      const sRes = await fetch(`${API}/competitions/WC/standings`, { headers: HEADERS });
+      const sJson = await sRes.json();
+      const allGroups = sJson.standings || [];
+      const myGroup = allGroups.find(g =>
+        (g.table || []).some(t => matchTeam(t.team?.name, 'Colombia'))
+      );
+      if (myGroup) {
+        groupK = myGroup.table.map(t => ({
+          team: t.team.name, pj: t.playedGames, g: t.won, e: t.draw, p: t.lost,
+          gf: t.goalsFor, gc: t.goalsAgainst, pts: t.points, col: matchTeam(t.team.name, 'Colombia'),
+        }));
+      }
+    } catch (e) { /* si standings falla, seguimos igual con fixtures */ }
+
+    // 3) Forma del Mundial para los 4 equipos del Grupo K (más reciente primero)
+    const worldcupForm = {}; GROUP.forEach(t => worldcupForm[t] = []);
+    const finishedAll = matches
+      .filter(m => m.status === 'FINISHED')
+      .sort((a, b) => new Date(a.utcDate) - new Date(b.utcDate));
+    finishedAll.forEach(m => {
+      const hName = m.homeTeam?.name, aName = m.awayTeam?.name;
+      const hCanon = canonicalOf(hName), aCanon = canonicalOf(aName);
+      [hCanon, aCanon].forEach(canon => {
+        if (!canon) return;
+        const isHome = canon === hCanon;
+        const gf = isHome ? m.score?.fullTime?.home : m.score?.fullTime?.away;
+        const ga = isHome ? m.score?.fullTime?.away : m.score?.fullTime?.home;
+        if (gf == null || ga == null) return;
+        const r = gf > ga ? 'W' : (gf < ga ? 'L' : 'D');
+        const opp = isHome ? aName : hName;
+        worldcupForm[canon].unshift({ r, t: `${gf}-${ga} vs ${opp}` });
       });
-    } catch (e) { /* si falla, el frontend usa la forma pre-Mundial */ }
+    });
 
     return {
       statusCode: 200,
