@@ -10,10 +10,11 @@
 export async function handler(event) {
   const opp = event.queryStringParameters?.opp || 'el próximo rival';
   const context = event.queryStringParameters?.context || '';
+  const DEFAULT_CONTEXT = 'James Rodríguez capitán (34), Luis Díaz (Bayern Múnich), DT Néstor Lorenzo, base de la Copa América 2024 (subcampeón). Llega en alza: cerró la preparación con 2 victorias en junio (3-1 vs Costa Rica, 2-0 vs Jordania) tras un marzo flojo (derrotas con Francia y Croacia).';
 
   const prompt = `Eres un analista de fútbol frío y basado en datos. Predice el resultado de:
 Colombia vs ${opp} — Mundial 2026, fase de grupos (Grupo K).
-Contexto de Colombia: ${context || 'James Rodríguez capitán, Luis Díaz, DT Néstor Lorenzo, base de la Copa América 2024 subcampeón, llega irregular tras 2 derrotas en amistosos de marzo.'}
+Contexto de Colombia: ${context || DEFAULT_CONTEXT}
 
 Responde SOLO con un JSON válido, sin texto extra, con esta forma exacta:
 {"score":"X – Y","market":"COL|DRAW|OPP","confidence":NUMERO_0_100,"reason":"una frase corta y fría"}
